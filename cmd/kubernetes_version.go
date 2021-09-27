@@ -9,11 +9,30 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/golang/glog"
 )
 
-func getKubeVersionFromRESTAPI() (string, error) {
+type KubeVersion struct {
+	Major       string
+	Minor       string
+	baseVersion string
+	GitVersion  string
+}
+
+func (k *KubeVersion) BaseVersion() string {
+	if k.baseVersion != "" {
+		return k.baseVersion
+	}
+	// Some provides return the minor version like "15+"
+	minor := strings.Replace(k.Minor, "+", "", -1)
+	ver := fmt.Sprintf("%s.%s", k.Major, minor)
+	k.baseVersion = ver
+	return ver
+}
+
+func getKubeVersionFromRESTAPI() (*KubeVersion, error) {
 	k8sVersionURL := getKubernetesURL()
 	serviceaccount := "/var/run/secrets/kubernetes.io/serviceaccount"
 	cacertfile := fmt.Sprintf("%s/ca.crt", serviceaccount)
@@ -21,52 +40,71 @@ func getKubeVersionFromRESTAPI() (string, error) {
 
 	tlsCert, err := loadCertficate(cacertfile)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	tb, err := ioutil.ReadFile(tokenfile)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	token := strings.TrimSpace(string(tb))
 
-	data, err := getWebData(k8sVersionURL, token, tlsCert)
+	data, err := getWebDataWithRetry(k8sVersionURL, token, tlsCert)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	k8sVersion, err := extractVersion(data)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	return k8sVersion, nil
 }
 
-func extractVersion(data []byte) (string, error) {
-	type versionResponse struct {
-		Major        string
-		Minor        string
-		GitVersion   string
-		GitCommit    string
-		GitTreeState string
-		BuildDate    string
-		GoVersion    string
-		Compiler     string
-		Platform     string
+// The idea of this function is so if Kubernetes DNS is not completely seetup and the
+// Container where kube-bench is running needs time for DNS configure.
+// Basically try 10 times, waiting 1 second until either it is successful or it fails.
+func getWebDataWithRetry(k8sVersionURL, token string, cacert *tls.Certificate) (data []byte, err error) {
+	tries := 0
+	// We retry a few times in case the DNS service has not had time to come up
+	for tries < 10 {
+		data, err = getWebData(k8sVersionURL, token, cacert)
+		if err == nil {
+			return
+		}
+		tries++
+		time.Sleep(1 * time.Second)
 	}
 
-	vrObj := &versionResponse{}
+	return
+}
+
+type VersionResponse struct {
+	Major        string
+	Minor        string
+	GitVersion   string
+	GitCommit    string
+	GitTreeState string
+	BuildDate    string
+	GoVersion    string
+	Compiler     string
+	Platform     string
+}
+
+func extractVersion(data []byte) (*KubeVersion, error) {
+	vrObj := &VersionResponse{}
 	glog.V(2).Info(fmt.Sprintf("vd: %s\n", string(data)))
 	err := json.Unmarshal(data, vrObj)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	glog.V(2).Info(fmt.Sprintf("vrObj: %#v\n", vrObj))
 
-	// Some provides return the minor version like "15+"
-	minor := strings.Replace(vrObj.Minor, "+", "", -1)
-	ver := fmt.Sprintf("%s.%s", vrObj.Major, minor)
-	return ver, nil
+	return &KubeVersion{
+		Major:      vrObj.Major,
+		Minor:      vrObj.Minor,
+		GitVersion: vrObj.GitVersion,
+	}, nil
 }
 
 func getWebData(srvURL, token string, cacert *tls.Certificate) ([]byte, error) {
@@ -117,7 +155,7 @@ func loadCertficate(certFile string) (*tls.Certificate, error) {
 		return nil, fmt.Errorf("unable to Decode certificate")
 	}
 
-	glog.V(2).Info(fmt.Sprintf("Loading CA certificate"))
+	glog.V(2).Info("Loading CA certificate")
 	tlsCert.Certificate = append(tlsCert.Certificate, block.Bytes)
 	return &tlsCert, nil
 }
@@ -135,7 +173,7 @@ func getKubernetesURL() string {
 			return fmt.Sprintf("https://%s:%s/version", k8sHost, k8sPort)
 		}
 
-		glog.V(2).Info(fmt.Sprintf("KUBE_BENCH_K8S_ENV is set, but environment variables KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT_HTTPS are not set"))
+		glog.V(2).Info("KUBE_BENCH_K8S_ENV is set, but environment variables KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT_HTTPS are not set")
 	}
 
 	return k8sVersionURL

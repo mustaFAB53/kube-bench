@@ -29,8 +29,10 @@ node:
       - "/etc/kubernetes/kubelet-kubeconfig"
     confs:
       - "/var/lib/kubelet/config.yaml"
+      - "/var/lib/kubelet/config.yml"
       - "/etc/kubernetes/kubelet/kubelet-config.json"
       - "/home/kubernetes/kubelet-config.yaml"
+      - "/home/kubernetes/kubelet-config.yml"
       - "/etc/default/kubelet"
       ## Due to the fact that the kubelet might be configured
       ## without a kubelet-config file, we use a work-around
@@ -62,12 +64,10 @@ node:
     defaultkubeconfig: "/etc/kubernetes/proxy.conf"
 
 version_mapping:
-  "1.11": "cis-1.3"
-  "1.12": "cis-1.3"
-  "1.13": "cis-1.4"
-  "1.14": "cis-1.4"
   "1.15": "cis-1.5"
-  "1.16": "cis-1.5"
-  "1.17": "cis-1.5"
+  "1.16": "cis-1.6"
+  "1.17": "cis-1.6"
+  "1.18": "cis-1.6"
+  "1.19": "cis-1.6"
   "ocp-3.10": "rh-0.7"
   "ocp-3.11": "rh-0.7"
